@@ -1,6 +1,6 @@
 ![Language: Rust](https://img.shields.io/badge/language-Rust-green.svg)
 ![Topic: Graphs](https://img.shields.io/badge/topic-Graphs-red.svg)
-![Library Status: Alpha](https://img.shields.io/badge/status-Library_Complete-red.svg)
+![Library Status: Alpha](https://img.shields.io/badge/status-Library_Nonfunctional-red.svg)
 
 # Seams, Grids, and Lattices
 
@@ -16,11 +16,11 @@ functions.  It provides a standardized API for accessing individual
 points, rows, and columns, and tracks the removal of seams.  It can take
 a visitor to perform these operations, and return the modified visitor.
 
-By making the _analysis_ phase of a seam operation a read-only
-pass, we make it easier to multi-thread, and by turning the grid into a
-lattice, we make the recalculation of the grid much faster.  An
-individual pass will be slower than a grid-based solution, but multiple
-passes are expected to be faster.
+By making the _analysis_ phase of a seam operation a read-only pass, we
+make it easier to multi-thread, and by turning the grid into a lattice,
+we make the recalculation of the grid much faster.  An individual pass
+will be slower than a grid-based solution, but multiple passes are
+expected to be faster.
 
 ## Acceptable cons
 

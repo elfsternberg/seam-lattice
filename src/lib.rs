@@ -1,3 +1,25 @@
+use std::ops::{Index, IndexMut};
+
+// Conventions!
+//
+// We always, *ALWAYS*, refer to width, height, in that order.  The
+// position of a node on a _grid_ is therefore always `y * width + x`,
+// that is, the number of rows DOWN is calculated as an offset
+// multiple of the width, followed by the offset into the row to find
+// the node.
+//
+// For navigation, we always, *ALWAYS*, talk about movement along the
+// X-axis first, then the Y-axis second.
+//
+// Following the standard mental model for grids, the upper-left-hand
+// corner is the origin, and all calculations thereafter progress
+// RIGHT or DOWN, and the offsets in those directions are positive.
+// Going UP or LEFT is a negative direction.
+//
+// The eight-cell collection of node pointers skips the center, but
+// otherwise follows a predictable course from top to bottom, left to
+// right.
+
 macro_rules! cq {
 	($condition: expr, $_true: expr, $_false: expr) => {
 		if $condition {
@@ -14,43 +36,44 @@ const LF: i32 = -1;
 const RT: i32 = 1;
 const SM: i32 = 0;
 
+#[allow(unused_macros)]
 macro_rules! dm {
-	(UP, LF) => {
+	(LF, UP) => {
 			0
 	};
-	(UP, SM) => {
+	(SM, UP) => {
 			1
 	};
-	(UP, RT) => {
+	(RT, UP) => {
 			2
 	};
-	(SM, LF) => {
+	(LF, SM) => {
 			3
 	};
-	(SM, RT) => {
+	(RT, SM) => {
 			4
 	};
-	(DN, LF) => {
+	(LF, DN) => {
 			5
 	};
-	(DN, SM) => {
+	(SM, DN) => {
 			6
 	};
-	(DN, RT) => {
+	(RT, DN) => {
 			7
 	};
 }
 
 pub fn dm(y: i32, x: i32) -> u32 {
 	match (y, x) {
-		(UP, LF) => 0,
-		(UP, SM) => 1,
-		(UP, RT) => 2,
-		(SM, LF) => 3,
-		(SM, RT) => 4,
-		(DN, LF) => 5,
-		(DN, SM) => 6,
-		(DN, RT) => 7,
+		(LF, UP) => 0,
+		(SM, UP) => 1,
+		(RT, UP) => 2,
+		(LF, SM) => 3,
+		(RT, SM) => 4,
+		(LF, DN) => 5,
+		(SM, DN) => 6,
+		(RT, DN) => 7,
 		_ => panic!("This should not happen"),
 	}
 }
@@ -83,13 +106,13 @@ fn initialize_lattice<P: Default + Copy>(width: u32, height: u32, data: &mut Vec
 						continue;
 					}
 					let pos = (h as usize) * (width as usize) + (w as usize);
-					data[pos].neighbors[dm(ny, nx) as usize] = {
+					let node_ptr = dm(nx, ny);
+					data[pos].neighbors[node_ptr as usize] = {
 						let tx = (h as i32) + ny;
 						let ty = (w as i32) + nx;
-						let tx = cq!(tx < 0, 0, cq!(tx > mw as i32, mw, tx as u32));
-						let ty = cq!(ty < 0, 0, cq!(ty > mh as i32, mh, tx as u32));
-						println!("{}, {}", tx, ty);
-						ty * width + tx
+						let ntx = cq!(tx < 0, 0, cq!(tx > mw as i32, mw, tx as u32));
+						let nty = cq!(ty < 0, 0, cq!(ty > mh as i32, mh, ty as u32));
+						nty * width + ntx
 					};
 				}
 			}
@@ -123,7 +146,7 @@ impl<P: Default + Copy> SeamLattice<P> {
 	}
 
 	pub fn create_from_grid(width: u32, height: u32, source: &Vec<P>) -> Self {
-		let mut data: Vec<Point<P>> = Vec::with_capacity((width * height) as usize);
+		let mut data = vec![Point::<P>::default(); width as usize * height as usize];
 		initialize_lattice(width, height, &mut data);
 		(0..(width * height) as usize).for_each(|i| {
 			data[i].data = source[i];
@@ -142,6 +165,22 @@ impl<P: Default + Copy> SeamLattice<P> {
 
 	pub fn transit(&self, node: u32, x: i32, y: i32) -> u32 {
 		self.transit_by_direction(node, dm(x, y))
+	}
+}
+
+impl<P: Default + Copy> Index<u32> for SeamLattice<P> {
+	type Output = P;
+
+	/// A convenience addressing mode for getting values.
+	fn index(&self, p: u32) -> &P {
+		&self.data[p as usize].data
+	}
+}
+
+impl<P: Default + Copy> IndexMut<u32> for SeamLattice<P> {
+	/// A convenience addressing mode for setting values.
+	fn index_mut(&mut self, p: u32) -> &mut P {
+		&mut self.data[p as usize].data
 	}
 }
 
@@ -187,13 +226,30 @@ mod tests {
 	fn smallest_grid_is_statically_self_referring() {
 		let grid: SeamLattice<u32> = SeamLattice::new(1, 1);
 		let root = grid.root;
-		test_dm!(grid, root, UP, LF);
-		test_dm!(grid, root, UP, SM);
-		test_dm!(grid, root, UP, RT);
-		test_dm!(grid, root, SM, LF);
-		test_dm!(grid, root, SM, RT);
-		test_dm!(grid, root, DN, LF);
-		test_dm!(grid, root, DN, SM);
-		test_dm!(grid, root, DN, RT);
+		test_dm!(grid, root, LF, UP);
+		test_dm!(grid, root, SM, UP);
+		test_dm!(grid, root, RT, UP);
+		test_dm!(grid, root, LF, SM);
+		test_dm!(grid, root, RT, SM);
+		test_dm!(grid, root, LF, DN);
+		test_dm!(grid, root, SM, DN);
+		test_dm!(grid, root, LF, DN);
+	}
+
+	#[test]
+	fn triple_grid_is_self_referring() {
+		let grid: SeamLattice<u32> =
+			SeamLattice::create_from_grid(3, 3, &vec![10, 11, 12, 13, 14, 15, 16, 17, 18]);
+		let center = grid.transit(grid.root, DN, RT);
+		assert_eq!(grid[center], 14);
+
+		assert_eq!(grid[grid.transit(center, UP, LF)], 10);
+		assert_eq!(grid[grid.transit(center, UP, SM)], 11);
+		assert_eq!(grid[grid.transit(center, UP, RT)], 12);
+		assert_eq!(grid[grid.transit(center, SM, LF)], 13);
+		assert_eq!(grid[grid.transit(center, SM, RT)], 15);
+		assert_eq!(grid[grid.transit(center, DN, LF)], 16);
+		assert_eq!(grid[grid.transit(center, DN, SM)], 17);
+		assert_eq!(grid[grid.transit(center, DN, RT)], 18);
 	}
 }

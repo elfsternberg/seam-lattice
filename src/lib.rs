@@ -321,11 +321,11 @@ mod tests {
 		assert_eq!(grid[grid.transit(center, RT, DN)], 18);
 	}
 
-	struct Summer(NodeId);
+	struct Summer(NodeId, i32, i32);
 	impl WalkStep<u32> for Summer {
 		fn step(&mut self, lattice: &SeamLattice<u32>) -> Option<NodeId> {
 			let cur = self.0;
-			self.0 = lattice.transit(self.0, RT, SM);
+			self.0 = lattice.transit(self.0, self.1, self.2);
 			Some(cur)
 		}
 	}
@@ -338,8 +338,8 @@ mod tests {
 		total
 	}
 
-	fn build_walker(node_id: NodeId) -> Walker<u32> {
-		Walker::new(Box::new(Summer(node_id)))
+	fn build_walker(node_id: NodeId, x: i32, y: i32) -> Walker<u32> {
+		Walker::new(Box::new(Summer(node_id, x, y)))
 	}
 
 	#[test]
@@ -347,15 +347,63 @@ mod tests {
 		let grid: SeamLattice<u32> =
 			SeamLattice::create_from_grid(3, 3, &vec![10, 11, 12, 13, 14, 15, 16, 17, 18]);
 
-		println!("{:?}", grid);
-
-		let mut walker = build_walker(0);
+		let mut walker = build_walker(0, RT, SM);
 		assert_eq!(visit(&mut walker, &grid), 33);
 
-		let mut walker = build_walker(3);
+		let mut walker = build_walker(3, RT, SM);
 		assert_eq!(visit(&mut walker, &grid), 42);
 
-		let mut walker = build_walker(6);
+		let mut walker = build_walker(6, RT, SM);
 		assert_eq!(visit(&mut walker, &grid), 51);
+
+		let mut walker = build_walker(0, RT, DN);
+		assert_eq!(visit(&mut walker, &grid), 42);
+
+		let mut walker = build_walker(2, LF, DN);
+		assert_eq!(visit(&mut walker, &grid), 42);
+	}
+
+	struct GridSummer(NodeId, NodeId, bool);
+
+	impl GridSummer {
+		fn new(node_id: NodeId) -> GridSummer {
+			GridSummer(node_id, node_id, false)
+		}
+	}
+
+	// While traversing in one dimension, the sentinel is false UNTIL
+	// the pointer to the last object in the row has been retrieved
+	// for return.  At the next phase, the sentinel is checked and
+	// if
+
+	impl WalkStep<u32> for GridSummer {
+		fn step(&mut self, lattice: &SeamLattice<u32>) -> Option<NodeId> {
+			let cur = if self.2 {
+				let nextrow = lattice.transit(self.1, SM, DN);
+				if nextrow == self.1 {
+					return None;
+				}
+				let cur = nextrow;
+				self.1 = cur;
+				self.2 = false;
+				cur
+			} else {
+				self.0
+			};
+
+			self.0 = lattice.transit(cur, RT, SM);
+			if cur == self.0 {
+				self.2 = true;
+			}
+			Some(cur)
+		}
+	}
+
+	#[test]
+	fn visit_whole_grid() {
+		let grid: SeamLattice<u32> =
+			SeamLattice::create_from_grid(3, 3, &vec![10, 11, 12, 13, 14, 15, 16, 17, 18]);
+		let mut walker = Walker::new(Box::new(GridSummer::new(0)));
+		assert_eq!(visit(&mut walker, &grid), 126);
 	}
 }

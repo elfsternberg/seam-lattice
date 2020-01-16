@@ -250,6 +250,25 @@ impl<'a, P: Default + Copy + std::fmt::Display> Walker<P> {
 			}
 		}
 	}
+
+	/// Given a lattice, return a reference to the value found at that location,
+	/// in a mutable fashion.
+	pub fn next_mut(&mut self, lattice: &'a mut SeamLattice<P>) -> Option<&'a mut P> {
+		let node_id = self.step.step(&lattice);
+		match node_id {
+			None => None,
+			Some(node_id) => {
+				if let Some(prev_node_id) = self.prev_node_id {
+					if prev_node_id == node_id {
+						return None;
+					}
+				}
+				let data = &mut lattice.data[node_id as usize].data;
+				self.prev_node_id = Some(node_id);
+				Some(data)
+			}
+		}
+	}
 }
 
 #[cfg(test)]
@@ -405,5 +424,19 @@ mod tests {
 			SeamLattice::create_from_grid(3, 3, &vec![10, 11, 12, 13, 14, 15, 16, 17, 18]);
 		let mut walker = Walker::new(Box::new(GridSummer::new(0)));
 		assert_eq!(visit(&mut walker, &grid), 126);
+	}
+
+	#[test]
+	fn modify_whole_grid() {
+		let mut grid: SeamLattice<u32> =
+			SeamLattice::create_from_grid(3, 3, &vec![10, 11, 12, 13, 14, 15, 16, 17, 18]);
+
+		let mut walker = Walker::new(Box::new(GridSummer::new(0)));
+		while let Some(v) = walker.next_mut(&mut grid) {
+			*v = *v * 10;
+		}
+
+		let mut walker = Walker::new(Box::new(GridSummer::new(0)));
+		assert_eq!(visit(&mut walker, &grid), 1260);
 	}
 }

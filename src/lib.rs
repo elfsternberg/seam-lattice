@@ -7,7 +7,6 @@
 //!
 //! The SeamLattice takes a two-dimensional
 
-use std::default::Default;
 use std::ops::{Index, IndexMut};
 
 // Conventions!
@@ -82,13 +81,13 @@ pub fn dm(y: i32, x: i32) -> u32 {
 	}
 }
 
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Clone)]
 /// Abstract Node in the Lattice; knows only what data you give it,
 /// plus information about the neighbors that should really be
 /// private.
 pub(in crate) struct Node<P>
 where
-	P: std::default::Default + Copy,
+	P: Copy,
 {
 	neighbors: [u32; 8],
 	/// User-accessible information.
@@ -98,7 +97,7 @@ where
 type NodeId = u32;
 
 /// The base class for this library.  
-pub struct SeamLattice<P: Default + Copy> {
+pub struct SeamLattice<P: Copy> {
 	width: u32,
 	height: u32,
 	root: NodeId,
@@ -108,54 +107,40 @@ pub struct SeamLattice<P: Default + Copy> {
 // Private, obviously.  Assumes the vector will be a 1:1
 // representation of the source data, such that an image could be
 // reconstructed when finished.
-fn initialize_lattice<P: Default + Copy>(width: u32, height: u32, data: &mut Vec<Node<P>>) {
-	let mw = width - 1;
-	let mh = height - 1;
-
-	for h in 0..height {
-		for w in 0..width {
-			for hstep in UP..=DN {
-				for wstep in LF..=RT {
-					if hstep == 0 && wstep == 0 {
-						continue;
-					}
-					let pos = (h as usize) * (width as usize) + (w as usize);
-					let node_ptr = dm(wstep, hstep);
-					data[pos].neighbors[node_ptr as usize] = {
-						let hpoint = (h as i32) + hstep;
-						let wpoint = (w as i32) + wstep;
-						if hpoint < 0 || hpoint > mh as i32 || wpoint < 0 || wpoint > mw as i32 {
-							pos as u32
-						} else {
-							width * (hpoint as u32) + (wpoint as u32)
-						}
-					};
-				}
+fn calculate_neighbors(point: u32, width: u32, height: u32) -> [u32; 8] {
+	let h = point / width;
+	let w = point % width;
+	let mut neighbors: [u32; 8] = [0; 8];
+	for hstep in UP..=DN {
+		for wstep in LF..=RT {
+			if hstep == 0 && wstep == 0 {
+				continue;
 			}
+			let node_ptr = dm(wstep, hstep);
+			neighbors[node_ptr as usize] = {
+				let hpoint = (h as i32) + hstep;
+				let wpoint = (w as i32) + wstep;
+				if hpoint < 0 || hpoint >= height as i32 || wpoint < 0 || wpoint >= width as i32 {
+					point as u32
+				} else {
+					width * (hpoint as u32) + (wpoint as u32)
+				}
+			};
 		}
 	}
+	neighbors
 }
 
-impl<P: Default + Copy> SeamLattice<P> {
-	/// Build a new empty Lattice
-	pub fn new(width: u32, height: u32) -> Self {
-		let mut data = vec![Node::<P>::default(); width as usize * height as usize];
-		initialize_lattice(width, height, &mut data);
-		SeamLattice {
-			width,
-			height,
-			root: 0,
-			data,
-		}
-	}
-
+impl<P: Copy> SeamLattice<P> {
 	/// Build a lattice from a source vector.  As this assumes a two-dimensional
 	/// space, the width and height of the source must be included.
-	pub fn create_from_grid(width: u32, height: u32, source: &Vec<P>) -> Self {
-		let mut data = vec![Node::<P>::default(); width as usize * height as usize];
-		initialize_lattice(width, height, &mut data);
-		(0..(width * height) as usize).for_each(|i| {
-			data[i].data = source[i];
+	pub fn new(width: u32, height: u32, source: &mut dyn Iterator<Item = P>) -> Self {
+		let mut data: Vec<Node<P>> = Vec::with_capacity(width as usize * height as usize);
+		source.enumerate().for_each(|(i, d)| {
+			data.push(Node {
+				data: d,
+				neighbors: calculate_neighbors(i as u32, width, height),
+			})
 		});
 		SeamLattice {
 			width,
@@ -177,7 +162,7 @@ impl<P: Default + Copy> SeamLattice<P> {
 	}
 }
 
-impl<P: Default + Copy> Index<u32> for SeamLattice<P> {
+impl<P: Copy> Index<u32> for SeamLattice<P> {
 	type Output = P;
 
 	/// A convenience addressing mode for getting values.
@@ -186,14 +171,14 @@ impl<P: Default + Copy> Index<u32> for SeamLattice<P> {
 	}
 }
 
-impl<P: Default + Copy> IndexMut<u32> for SeamLattice<P> {
+impl<P: Copy> IndexMut<u32> for SeamLattice<P> {
 	/// A convenience addressing mode for setting values.
 	fn index_mut(&mut self, p: u32) -> &mut P {
 		&mut self.data[p as usize].data
 	}
 }
 
-impl<P: Default + Copy + std::fmt::Debug> std::fmt::Debug for SeamLattice<P> {
+impl<P: Copy + std::fmt::Debug> std::fmt::Debug for SeamLattice<P> {
 	fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
 		writeln!(
 			f,
@@ -210,7 +195,7 @@ impl<P: Default + Copy + std::fmt::Debug> std::fmt::Debug for SeamLattice<P> {
 
 /// This trait takes a lattice and returns a new NodeId, indicating
 /// where the next step should be.
-pub trait WalkStep<P: Default + Copy> {
+pub trait WalkStep<P: Copy> {
 	/// Given a lattice, return the address found by taking a step.
 	fn step(&mut self, lattice: &SeamLattice<P>) -> Option<NodeId>;
 }
@@ -218,12 +203,12 @@ pub trait WalkStep<P: Default + Copy> {
 /// A walker takes a Step (which must understandably last at least as
 /// long as the Walker), and for each call of `next()` returns the
 /// content of the node indicated by Step (`Some(P)`), or `None`.
-pub struct Walker<P: Default + Copy> {
+pub struct Walker<P: Copy> {
 	prev_node_id: Option<NodeId>,
 	step: Box<dyn WalkStep<P>>,
 }
 
-impl<'a, P: Default + Copy + std::fmt::Display> Walker<P> {
+impl<'a, P: Copy + std::fmt::Display> Walker<P> {
 	/// Construct a new Walker.
 	pub fn new(step: Box<dyn WalkStep<P>>) -> Walker<P> {
 		Walker {
@@ -245,7 +230,6 @@ impl<'a, P: Default + Copy + std::fmt::Display> Walker<P> {
 				}
 				let data = &lattice.data[node_id as usize].data;
 				self.prev_node_id = Some(node_id);
-				println!("{}", data);
 				Some(data)
 			}
 		}
@@ -277,13 +261,15 @@ mod tests {
 
 	#[test]
 	fn smallest_possible_grid() {
-		let _grid: SeamLattice<u32> = SeamLattice::new(1, 1);
+		let sample = vec![0];
+		let _grid: SeamLattice<u32> = SeamLattice::new(1, 1, &mut sample.into_iter());
 		assert!(true, "Grid constructed");
 	}
 
 	#[test]
 	fn smallest_grid_is_self_referring() {
-		let grid: SeamLattice<u32> = SeamLattice::new(1, 1);
+		let sample = vec![0];
+		let grid: SeamLattice<u32> = SeamLattice::new(1, 1, &mut sample.into_iter());
 		let root = grid.root;
 		for i in UP..=DN {
 			for j in LF..=RT {
@@ -311,7 +297,8 @@ mod tests {
 
 	#[test]
 	fn smallest_grid_is_statically_self_referring() {
-		let grid: SeamLattice<u32> = SeamLattice::new(1, 1);
+		let sample = vec![0];
+		let grid: SeamLattice<u32> = SeamLattice::new(1, 1, &mut sample.into_iter());
 		let root = grid.root;
 		test_dm!(grid, root, LF, UP);
 		test_dm!(grid, root, SM, UP);
@@ -325,8 +312,8 @@ mod tests {
 
 	#[test]
 	fn triple_grid_is_self_referring() {
-		let grid: SeamLattice<u32> =
-			SeamLattice::create_from_grid(3, 3, &vec![10, 11, 12, 13, 14, 15, 16, 17, 18]);
+		let sample = vec![10, 11, 12, 13, 14, 15, 16, 17, 18];
+		let grid: SeamLattice<u32> = SeamLattice::new(3, 3, &mut sample.into_iter());
 		let center = grid.transit(grid.root, DN, RT);
 		assert_eq!(grid[center], 14);
 
@@ -363,8 +350,8 @@ mod tests {
 
 	#[test]
 	fn visit_threeby_grid() {
-		let grid: SeamLattice<u32> =
-			SeamLattice::create_from_grid(3, 3, &vec![10, 11, 12, 13, 14, 15, 16, 17, 18]);
+		let sample = vec![10, 11, 12, 13, 14, 15, 16, 17, 18];
+		let grid: SeamLattice<u32> = SeamLattice::new(3, 3, &mut sample.into_iter());
 
 		let mut walker = build_walker(0, RT, SM);
 		assert_eq!(visit(&mut walker, &grid), 33);
@@ -420,17 +407,16 @@ mod tests {
 
 	#[test]
 	fn visit_whole_grid() {
-		let grid: SeamLattice<u32> =
-			SeamLattice::create_from_grid(3, 3, &vec![10, 11, 12, 13, 14, 15, 16, 17, 18]);
+		let sample = vec![10, 11, 12, 13, 14, 15, 16, 17, 18];
+		let grid: SeamLattice<u32> = SeamLattice::new(3, 3, &mut sample.into_iter());
 		let mut walker = Walker::new(Box::new(GridSummer::new(0)));
 		assert_eq!(visit(&mut walker, &grid), 126);
 	}
 
 	#[test]
 	fn modify_whole_grid() {
-		let mut grid: SeamLattice<u32> =
-			SeamLattice::create_from_grid(3, 3, &vec![10, 11, 12, 13, 14, 15, 16, 17, 18]);
-
+		let sample = vec![10, 11, 12, 13, 14, 15, 16, 17, 18];
+		let mut grid: SeamLattice<u32> = SeamLattice::new(3, 3, &mut sample.into_iter());
 		let mut walker = Walker::new(Box::new(GridSummer::new(0)));
 		while let Some(v) = walker.next_mut(&mut grid) {
 			*v = *v * 10;

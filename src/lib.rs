@@ -5,8 +5,14 @@
 
 //! SeamLattice
 //!
-//! The SeamLattice takes a two-dimensional
+//! The SeamLattice takes a two-dimensional object, usually representing
+//! an image's pixels and metadata about that pixel, and provides easy
+//! access to those pixels as if they were in a graph where every pixel
+//! has access to its neighbors via one of eight cardinal points.  This
+//! trades ease of indexing for operations in which whole rows, columns,
+//! or "seams" can be removed easily.
 
+#[allow(unused_imports)]
 use std::ops::{Index, IndexMut};
 
 // Conventions!
@@ -96,6 +102,12 @@ where
 
 type NodeId = u32;
 
+//  _         _   _   _
+// | |   __ _| |_| |_(_)__ ___
+// | |__/ _` |  _|  _| / _/ -_)
+// |____\__,_|\__|\__|_\__\___|
+//
+
 /// The base class for this library.  
 pub struct SeamLattice<P: Copy> {
 	width: u32,
@@ -160,6 +172,11 @@ impl<P: Copy> SeamLattice<P> {
 	pub fn transit(&self, node: u32, x: i32, y: i32) -> NodeId {
 		self.transit_by_direction(node, dm(x, y))
 	}
+
+	/// Returns an iterator over the data.
+	pub fn data(&self) -> SeamLatticeScannerIterator<P> {
+		SeamLatticeScannerIterator::new(self)
+	}
 }
 
 impl<P: Copy> Index<u32> for SeamLattice<P> {
@@ -193,12 +210,24 @@ impl<P: Copy + std::fmt::Debug> std::fmt::Debug for SeamLattice<P> {
 	}
 }
 
+//  ___ _
+// / __| |_ ___ _ __
+// \__ \  _/ -_) '_ \
+// |___/\__\___| .__/
+//             |_|
+
 /// This trait takes a lattice and returns a new NodeId, indicating
 /// where the next step should be.
 pub trait WalkStep<P: Copy> {
 	/// Given a lattice, return the address found by taking a step.
 	fn step(&mut self, lattice: &SeamLattice<P>) -> Option<NodeId>;
 }
+
+// __      __    _ _
+// \ \    / /_ _| | |_____ _ _
+//  \ \/\/ / _` | | / / -_) '_|
+//   \_/\_/\__,_|_|_\_\___|_|
+//
 
 /// A walker takes a Step (which must understandably last at least as
 /// long as the Walker), and for each call of `next()` returns the
@@ -208,7 +237,7 @@ pub struct Walker<P: Copy> {
 	step: Box<dyn WalkStep<P>>,
 }
 
-impl<'a, P: Copy + std::fmt::Display> Walker<P> {
+impl<'a, P: Copy> Walker<P> {
 	/// Construct a new Walker.
 	pub fn new(step: Box<dyn WalkStep<P>>) -> Walker<P> {
 		Walker {
@@ -254,6 +283,115 @@ impl<'a, P: Copy + std::fmt::Display> Walker<P> {
 		}
 	}
 }
+
+//  ___
+// / __| __ __ _ _ _  _ _  ___ _ _
+// \__ \/ _/ _` | ' \| ' \/ -_) '_|
+// |___/\__\__,_|_||_|_||_\___|_|
+//
+
+/// Scans a lattice, either left-to-right, top-to-bottom, or
+/// top-to-bottom, left-to-right, depending on the constructor used.
+// Apologies for the language; I really tried to come up with a
+// conceptual name for "transiting in a straight line" either
+// up-and-down or side-to-side, but nothing really came to me.
+// Regardless, "newline" means "new row" or "new column," depending
+// upon which constructor you choose.
+pub struct SeamLatticeScanner {
+	cardinal1: u32,
+	cardinal2: u32,
+	node1: u32,
+	node2: u32,
+	newline: bool,
+}
+
+impl SeamLatticeScanner {
+	/// Builds a new lattice scanner that scans left-to-right, then
+	/// top-to-bottom, the "natural" path used by most image scanning
+	/// algorithms, as this matches the usual layout of an image in an
+	/// array.
+	pub fn new<P: Copy>(lattice: &SeamLattice<P>) -> Self {
+		SeamLatticeScanner {
+			cardinal1: dm!(RT, SM),
+			cardinal2: dm!(SM, DN),
+			node1: lattice.root,
+			node2: lattice.root,
+			newline: false,
+		}
+	}
+
+	/// Builds a new lattice scanner that scans top-to-bottom, then
+	/// left-to-right, which is not the "natural" path used by image
+	/// scanning algorithms.
+	pub fn new_by_column<P: Copy>(lattice: &SeamLattice<P>) -> Self {
+		SeamLatticeScanner {
+			cardinal1: dm!(SM, DN),
+			cardinal2: dm!(RT, SM),
+			node1: lattice.root,
+			node2: lattice.root,
+			newline: false,
+		}
+	}
+}
+
+impl<P: Copy> WalkStep<P> for SeamLatticeScanner {
+	fn step(&mut self, lattice: &SeamLattice<P>) -> Option<NodeId> {
+		let cur = if self.newline {
+			let nextline = lattice.transit_by_direction(self.node2, self.cardinal2);
+			if nextline == self.node2 {
+				return None;
+			}
+			let cur = nextline;
+			self.node2 = cur;
+			self.newline = false;
+			cur
+		} else {
+			self.node1
+		};
+		self.node1 = lattice.transit_by_direction(cur, self.cardinal1);
+		if cur == self.node1 {
+			self.newline = true;
+		}
+		Some(cur)
+	}
+}
+
+//  ___       _          ___ _                _
+// |   \ __ _| |_ __ _  |_ _| |_ ___ _ _ __ _| |_ ___ _ _
+// | |) / _` |  _/ _` |  | ||  _/ -_) '_/ _` |  _/ _ \ '_|
+// |___/\__,_|\__\__,_| |___|\__\___|_| \__,_|\__\___/_|
+//
+
+/// A very simple iterator, that extracts the data in the
+/// expected order for recovering an image.
+pub struct SeamLatticeScannerIterator<'a, P: Copy> {
+	lattice: &'a SeamLattice<P>,
+	walker: Walker<P>,
+}
+
+impl<'a, P: Copy> SeamLatticeScannerIterator<'a, P> {
+	/// Construct a new, simple iterator for retrieving copies of the
+	/// data objects used by the lattice.
+	pub fn new(lattice: &'a SeamLattice<P>) -> Self {
+		SeamLatticeScannerIterator {
+			lattice,
+			walker: Walker::new(Box::new(SeamLatticeScanner::new(&lattice))),
+		}
+	}
+}
+
+impl<'a, P: Copy> Iterator for SeamLatticeScannerIterator<'a, P> {
+	type Item = &'a P;
+	fn next(&mut self) -> Option<&'a P> {
+		self.walker.next(self.lattice)
+	}
+}
+
+//  _____       _
+// |_   _|__ __| |_ ___
+//   | |/ -_|_-<  _(_-<
+//   |_|\___/__/\__/__/
+//
 
 #[cfg(test)]
 mod tests {
@@ -316,7 +454,6 @@ mod tests {
 		let grid: SeamLattice<u32> = SeamLattice::new(3, 3, &mut sample.into_iter());
 		let center = grid.transit(grid.root, DN, RT);
 		assert_eq!(grid[center], 14);
-
 		assert_eq!(grid[grid.transit(center, LF, UP)], 10);
 		assert_eq!(grid[grid.transit(center, SM, UP)], 11);
 		assert_eq!(grid[grid.transit(center, RT, UP)], 12);
@@ -369,47 +506,11 @@ mod tests {
 		assert_eq!(visit(&mut walker, &grid), 42);
 	}
 
-	struct GridSummer(NodeId, NodeId, bool);
-
-	impl GridSummer {
-		fn new(node_id: NodeId) -> GridSummer {
-			GridSummer(node_id, node_id, false)
-		}
-	}
-
-	// While traversing in one dimension, the sentinel is false UNTIL
-	// the pointer to the last object in the row has been retrieved
-	// for return.  At the next phase, the sentinel is checked and
-	// if
-
-	impl WalkStep<u32> for GridSummer {
-		fn step(&mut self, lattice: &SeamLattice<u32>) -> Option<NodeId> {
-			let cur = if self.2 {
-				let nextrow = lattice.transit(self.1, SM, DN);
-				if nextrow == self.1 {
-					return None;
-				}
-				let cur = nextrow;
-				self.1 = cur;
-				self.2 = false;
-				cur
-			} else {
-				self.0
-			};
-
-			self.0 = lattice.transit(cur, RT, SM);
-			if cur == self.0 {
-				self.2 = true;
-			}
-			Some(cur)
-		}
-	}
-
 	#[test]
 	fn visit_whole_grid() {
 		let sample = vec![10, 11, 12, 13, 14, 15, 16, 17, 18];
 		let grid: SeamLattice<u32> = SeamLattice::new(3, 3, &mut sample.into_iter());
-		let mut walker = Walker::new(Box::new(GridSummer::new(0)));
+		let mut walker = Walker::new(Box::new(SeamLatticeScanner::new(&grid)));
 		assert_eq!(visit(&mut walker, &grid), 126);
 	}
 
@@ -417,12 +518,13 @@ mod tests {
 	fn modify_whole_grid() {
 		let sample = vec![10, 11, 12, 13, 14, 15, 16, 17, 18];
 		let mut grid: SeamLattice<u32> = SeamLattice::new(3, 3, &mut sample.into_iter());
-		let mut walker = Walker::new(Box::new(GridSummer::new(0)));
+		let mut walker = Walker::new(Box::new(SeamLatticeScanner::new(&grid)));
 		while let Some(v) = walker.next_mut(&mut grid) {
 			*v = *v * 10;
 		}
 
-		let mut walker = Walker::new(Box::new(GridSummer::new(0)));
+		// Reinitialize scanner.
+		let mut walker = Walker::new(Box::new(SeamLatticeScanner::new(&grid)));
 		assert_eq!(visit(&mut walker, &grid), 1260);
 	}
 }
